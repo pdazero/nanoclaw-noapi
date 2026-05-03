@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { buildClaudeCliArgs, translateStreamJsonLines } from './claude-cli.js';
+import { buildClaudeCliArgs, ClaudeCliProvider, translateStreamJsonLines } from './claude-cli.js';
 import type { ProviderEvent } from './types.js';
 
 describe('buildClaudeCliArgs', () => {
@@ -175,5 +175,28 @@ describe('translateStreamJsonLines', () => {
     const events = await collect(translateStreamJsonLines(lines, { exitCode: () => 0, stderr: () => '' }));
     expect(events.find((e) => e.type === 'init')).toBeDefined();
     expect(events.find((e) => e.type === 'result')).toBeDefined();
+  });
+});
+
+describe('ClaudeCliProvider', () => {
+  it('exposes supportsNativeSlashCommands = true', () => {
+    expect(new ClaudeCliProvider().supportsNativeSlashCommands).toBe(true);
+  });
+
+  it('isSessionInvalid matches the documented stale-session text', () => {
+    const p = new ClaudeCliProvider();
+    expect(p.isSessionInvalid(new Error('No conversation found for that ID'))).toBe(true);
+    expect(p.isSessionInvalid(new Error('ENOENT: no such file or directory, open transcript.jsonl'))).toBe(true);
+    expect(p.isSessionInvalid(new Error('Session abc not found'))).toBe(true);
+    expect(p.isSessionInvalid(new Error('rate limit'))).toBe(false);
+    expect(p.isSessionInvalid('some random string')).toBe(false);
+  });
+
+  it('push() is a no-op (single-turn model — see plan)', () => {
+    const p = new ClaudeCliProvider();
+    const q = p.query({ prompt: 'hi', cwd: '/tmp' });
+    // Must not throw, must not affect the events generator.
+    expect(() => q.push('follow-up')).not.toThrow();
+    q.abort();
   });
 });

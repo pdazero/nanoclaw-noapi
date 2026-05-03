@@ -8,8 +8,9 @@
  * The class itself arrives in a later task; this file currently exports the
  * pure argv builder so it can be unit-tested in isolation.
  */
+import { registerProvider } from './provider-registry.js';
 import { DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
-import type { ProviderEvent } from './types.js';
+import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
 const DEFAULT_MCP_CONFIG_PATH = '/home/node/.claude/mcp.json';
 const DEFAULT_SETTINGS_PATH = '/home/node/.claude/settings.json';
@@ -177,3 +178,150 @@ export async function* translateStreamJsonLines(
     }
   }
 }
+
+const STALE_SESSION_RE = /no conversation found|ENOENT.*\.jsonl|session.*not found/i;
+
+const DEFAULT_CLAUDE_BIN = '/pnpm/claude';
+
+function log(msg: string): void {
+  console.error(`[claude-cli-provider] ${msg}`);
+}
+
+/**
+ * Read child stdout line-by-line. Bun streams Uint8Array chunks; we accumulate
+ * until newline boundaries and yield each complete line.
+ */
+async function* readLines(reader: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  const decoder = new TextDecoder();
+  let buf = '';
+  for await (const chunk of reader) {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf('\n')) !== -1) {
+      yield buf.slice(0, idx);
+      buf = buf.slice(idx + 1);
+    }
+  }
+  if (buf.length > 0) yield buf;
+}
+
+export class ClaudeCliProvider implements AgentProvider {
+  readonly supportsNativeSlashCommands = true;
+
+  private assistantName?: string;
+  private mcpServers: Record<string, McpServerConfig>;
+  private env: Record<string, string | undefined>;
+  private additionalDirectories?: string[];
+
+  constructor(options: ProviderOptions = {}) {
+    this.assistantName = options.assistantName;
+    this.mcpServers = options.mcpServers ?? {};
+    this.additionalDirectories = options.additionalDirectories;
+    this.env = options.env ?? {};
+  }
+
+  isSessionInvalid(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return STALE_SESSION_RE.test(msg);
+  }
+
+  query(input: QueryInput): AgentQuery {
+    const args = buildClaudeCliArgs({
+      prompt: input.prompt,
+      continuation: input.continuation,
+      systemContext: input.systemContext,
+      additionalDirectories: this.additionalDirectories,
+    });
+
+    const childEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(this.env)) {
+      if (typeof v === 'string') childEnv[k] = v;
+    }
+    if (this.assistantName) childEnv.NANOCLAW_ASSISTANT_NAME = this.assistantName;
+
+    let child: ReturnType<typeof Bun.spawn> | null = null;
+    let spawnError: Error | null = null;
+    try {
+      child = Bun.spawn([DEFAULT_CLAUDE_BIN, ...args], {
+        cwd: input.cwd,
+        env: childEnv,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+    } catch (err) {
+      spawnError = err instanceof Error ? err : new Error(String(err));
+      log(`spawn failed: ${spawnError.message}`);
+    }
+
+    let stderrBuf = '';
+    if (child) {
+      (async () => {
+        const reader = child!.stderr;
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        // @ts-expect-error — async iterable
+        for await (const chunk of reader) {
+          stderrBuf += decoder.decode(chunk, { stream: true });
+        }
+      })().catch((err) => {
+        log(`stderr drain error: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+
+    const adapter = {
+      exitCode: () => child?.exitCode ?? null,
+      stderr: () => stderrBuf,
+    };
+
+    let aborted = false;
+    const capturedSpawnError = spawnError;
+    const capturedChild = child;
+
+    const events = (async function* () {
+      if (capturedSpawnError) {
+        yield { type: 'error' as const, message: capturedSpawnError.message, retryable: false };
+        return;
+      }
+      const stdout = capturedChild?.stdout;
+      if (!stdout || typeof stdout === 'number') return;
+      for await (const evt of translateStreamJsonLines(readLines(stdout), adapter)) {
+        if (aborted) return;
+        yield evt;
+      }
+    })();
+
+    return {
+      events,
+      // Single-turn model — see plan §"Modelo de turno". The poll-loop
+      // delivers any messages that arrived during the spawn on the next
+      // wakeup with --resume.
+      push: () => {
+        log('push() called but ignored — claude-cli provider is single-turn per spawn');
+      },
+      end: () => {
+        try {
+          capturedChild?.kill('SIGTERM');
+        } catch {
+          /* already dead */
+        }
+      },
+      abort: () => {
+        aborted = true;
+        try {
+          capturedChild?.kill('SIGTERM');
+        } catch {
+          /* already dead */
+        }
+        setTimeout(() => {
+          try {
+            capturedChild?.kill('SIGKILL');
+          } catch {
+            /* already dead */
+          }
+        }, 5000);
+      },
+    };
+  }
+}
+
+registerProvider('claude-cli', (opts) => new ClaudeCliProvider(opts));
