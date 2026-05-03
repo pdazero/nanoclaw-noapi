@@ -15,6 +15,7 @@
  * with a top-level `registerProviderContainerConfig(...)` call, then appending
  * `import './<name>.js';` to `src/providers/index.ts` (the barrel).
  */
+import type { ContainerConfig } from '../container-config.js';
 
 export interface VolumeMount {
   hostPath: string;
@@ -23,12 +24,14 @@ export interface VolumeMount {
 }
 
 export interface ProviderContainerContext {
-  /** Per-session host directory: `<DATA_DIR>/v2-sessions/<session_id>`. */
+  /** Per-session host directory: `<DATA_DIR>/v2-sessions/<agent_group_id>/<session_id>`. */
   sessionDir: string;
   /** Agent group ID, for any per-group logic. */
   agentGroupId: string;
   /** `process.env` at spawn time — pull passthrough values from here. */
   hostEnv: NodeJS.ProcessEnv;
+  /** Parsed container.json for the agent group — read mcpServers etc. without duplicating I/O. */
+  containerConfig: ContainerConfig;
 }
 
 export interface ProviderContainerContribution {
