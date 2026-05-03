@@ -9,6 +9,7 @@
  * pure argv builder so it can be unit-tested in isolation.
  */
 import { DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
+import type { ProviderEvent } from './types.js';
 
 const DEFAULT_MCP_CONFIG_PATH = '/home/node/.claude/mcp.json';
 const DEFAULT_SETTINGS_PATH = '/home/node/.claude/settings.json';
@@ -78,8 +79,6 @@ export function buildClaudeCliArgs(input: BuildClaudeCliArgsInput): string[] {
 
   return args;
 }
-
-import type { ProviderEvent } from './types.js';
 
 /** Subtypes the CLI emits as `type:'result'` for non-success outcomes. */
 const RETRYABLE_RESULT_SUBTYPES = new Set(['error_max_turns', 'error_during_execution']);
