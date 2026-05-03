@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
-import { SDK_DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
+import { DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
 
 describe('tool-policies', () => {
   it('exports the same denylist the SDK provider used inline', () => {
-    expect(SDK_DISALLOWED_TOOLS).toEqual([
+    expect(DISALLOWED_TOOLS).toEqual([
       'CronCreate',
       'CronDelete',
       'CronList',
@@ -18,15 +18,31 @@ describe('tool-policies', () => {
   });
 
   it('exports the same allowlist the SDK provider used inline', () => {
-    expect(TOOL_ALLOWLIST).toContain('Bash');
-    expect(TOOL_ALLOWLIST).toContain('Read');
-    expect(TOOL_ALLOWLIST).toContain('Write');
-    expect(TOOL_ALLOWLIST).toContain('mcp__nanoclaw__*');
-    expect(TOOL_ALLOWLIST.length).toBeGreaterThan(15);
+    expect(TOOL_ALLOWLIST).toEqual([
+      'Bash',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+      'Task',
+      'TaskOutput',
+      'TaskStop',
+      'TeamCreate',
+      'TeamDelete',
+      'SendMessage',
+      'TodoWrite',
+      'ToolSearch',
+      'Skill',
+      'NotebookEdit',
+      'mcp__nanoclaw__*',
+    ]);
   });
 
   it('arrays are frozen so callers cannot mutate them', () => {
-    expect(Object.isFrozen(SDK_DISALLOWED_TOOLS)).toBe(true);
+    expect(Object.isFrozen(DISALLOWED_TOOLS)).toBe(true);
     expect(Object.isFrozen(TOOL_ALLOWLIST)).toBe(true);
   });
 });

@@ -7,9 +7,10 @@
  */
 
 /**
- * Tools the SDK exposes by default but that don't fit nanoclaw's
- * async message-passing model (or have nanoclaw equivalents that are
- * persistent across container restarts).
+ * Tools that either sidestep nanoclaw's own scheduling or don't fit our
+ * async message-passing model (they're designed for Claude Code's
+ * interactive UI and would hang here). Shared by both built-in providers
+ * (`claude` SDK + `claude-cli` headless).
  *
  * - CronCreate / CronDelete / CronList / ScheduleWakeup: nanoclaw has
  *   durable scheduling via `mcp__nanoclaw__schedule_task`.
@@ -20,7 +21,7 @@
  *   Code interactive UI affordances; would appear stuck in a headless
  *   container.
  */
-export const SDK_DISALLOWED_TOOLS: readonly string[] = Object.freeze([
+export const DISALLOWED_TOOLS: readonly string[] = Object.freeze([
   'CronCreate',
   'CronDelete',
   'CronList',
