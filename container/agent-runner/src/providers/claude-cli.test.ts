@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
-import { buildClaudeCliArgs } from './claude-cli.js';
+import { buildClaudeCliArgs, translateStreamJsonLines } from './claude-cli.js';
+import type { ProviderEvent } from './types.js';
 
 describe('buildClaudeCliArgs', () => {
   it('produces the minimal headless invocation', () => {
@@ -93,5 +94,86 @@ describe('buildClaudeCliArgs', () => {
     const s = args.indexOf('--settings');
     expect(args[m + 1]).toBe('/custom/mcp.json');
     expect(args[s + 1]).toBe('/custom/settings.json');
+  });
+});
+
+async function* fromArray<T>(items: T[]): AsyncIterable<T> {
+  for (const it of items) yield it;
+}
+
+async function collect(events: AsyncIterable<ProviderEvent>): Promise<ProviderEvent[]> {
+  const out: ProviderEvent[] = [];
+  for await (const e of events) out.push(e);
+  return out;
+}
+
+describe('translateStreamJsonLines', () => {
+  it('emits init with the session_id from system/init', async () => {
+    const lines = fromArray([JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' })]);
+    const events = await collect(translateStreamJsonLines(lines, { exitCode: () => 0, stderr: () => '' }));
+    expect(events.some((e) => e.type === 'init' && (e as { continuation: string }).continuation === 'sess-1')).toBe(true);
+  });
+
+  it('emits activity for assistant + user messages', async () => {
+    const lines = fromArray([
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'thinking' }] } }),
+      JSON.stringify({ type: 'user', message: { content: 'tool result' } }),
+    ]);
+    const events = await collect(translateStreamJsonLines(lines, { exitCode: () => 0, stderr: () => '' }));
+    expect(events.filter((e) => e.type === 'activity').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('emits result with the result text on system/result success', async () => {
+    const lines = fromArray([
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
+      JSON.stringify({ type: 'result', subtype: 'success', result: 'final answer' }),
+    ]);
+    const events = await collect(translateStreamJsonLines(lines, { exitCode: () => 0, stderr: () => '' }));
+    const result = events.find((e) => e.type === 'result') as { type: 'result'; text: string | null };
+    expect(result.text).toBe('final answer');
+  });
+
+  it('emits result on compact_boundary with token count when present', async () => {
+    const lines = fromArray([
+      JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { pre_tokens: 12345 },
+      }),
+    ]);
+    const events = await collect(translateStreamJsonLines(lines, { exitCode: () => 0, stderr: () => '' }));
+    const result = events.find((e) => e.type === 'result') as { type: 'result'; text: string };
+    expect(result.text).toMatch(/Context compacted/);
+    expect(result.text).toMatch(/12,345/);
+  });
+
+  it('emits retryable error on result/error_max_turns', async () => {
+    const lines = fromArray([
+      JSON.stringify({ type: 'result', subtype: 'error_max_turns', error: 'Too many turns' }),
+    ]);
+    const events = await collect(translateStreamJsonLines(lines, { exitCode: () => 0, stderr: () => '' }));
+    const err = events.find((e) => e.type === 'error') as { type: 'error'; message: string; retryable: boolean };
+    expect(err.retryable).toBe(true);
+  });
+
+  it('emits non-retryable error when CLI exits non-zero with no result line', async () => {
+    const lines = fromArray<string>([]);
+    const events = await collect(
+      translateStreamJsonLines(lines, { exitCode: () => 1, stderr: () => 'auth failed' }),
+    );
+    const err = events.find((e) => e.type === 'error') as { type: 'error'; message: string; retryable: boolean };
+    expect(err.retryable).toBe(false);
+    expect(err.message).toContain('auth failed');
+  });
+
+  it('ignores unparseable lines defensively (does not abort the stream)', async () => {
+    const lines = fromArray<string>([
+      'not json',
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
+      JSON.stringify({ type: 'result', subtype: 'success', result: 'ok' }),
+    ]);
+    const events = await collect(translateStreamJsonLines(lines, { exitCode: () => 0, stderr: () => '' }));
+    expect(events.find((e) => e.type === 'init')).toBeDefined();
+    expect(events.find((e) => e.type === 'result')).toBeDefined();
   });
 });
