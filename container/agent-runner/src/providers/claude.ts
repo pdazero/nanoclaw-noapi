@@ -4,8 +4,8 @@ import path from 'path';
 import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
-import { registerProvider } from './provider-registry.js';
 import { formatTranscriptMarkdown, parseTranscript } from './claude-cli-hooks/transcript.js';
+import { registerProvider } from './provider-registry.js';
 import { DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
 import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
