@@ -1505,7 +1505,6 @@ export class ClaudeCliProvider implements AgentProvider {
   query(input: QueryInput): AgentQuery {
     const args = buildClaudeCliArgs({
       prompt: input.prompt,
-      cwd: input.cwd,
       continuation: input.continuation,
       systemContext: input.systemContext,
       additionalDirectories: this.additionalDirectories,
