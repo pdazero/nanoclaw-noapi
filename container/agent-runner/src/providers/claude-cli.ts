@@ -14,10 +14,13 @@ const DEFAULT_MCP_CONFIG_PATH = '/home/node/.claude/mcp.json';
 const DEFAULT_SETTINGS_PATH = '/home/node/.claude/settings.json';
 
 export interface BuildClaudeCliArgsInput {
+  /** Initial prompt text. Always rendered as the LAST argv element after `--`. */
   prompt: string;
-  cwd: string;
+  /** Session id from a prior turn; if set, the CLI resumes via `--resume`. */
   continuation?: string;
+  /** System instructions appended via `--append-system-prompt`. */
   systemContext?: { instructions?: string };
+  /** Additional dirs the CLI is allowed to read; each becomes one `--add-dir`. */
   additionalDirectories?: string[];
   /** Override the default `/home/node/.claude/mcp.json` (used in tests). */
   mcpConfigPath?: string;

@@ -6,7 +6,6 @@ describe('buildClaudeCliArgs', () => {
   it('produces the minimal headless invocation', () => {
     const args = buildClaudeCliArgs({
       prompt: 'Hello',
-      cwd: '/workspace/agent',
     });
     expect(args[0]).toBe('-p');
     expect(args).toContain('--output-format');
@@ -22,7 +21,6 @@ describe('buildClaudeCliArgs', () => {
   it('appends --resume <id> when continuation is set', () => {
     const args = buildClaudeCliArgs({
       prompt: 'Hi',
-      cwd: '/workspace/agent',
       continuation: 'sess-abc',
     });
     const i = args.indexOf('--resume');
@@ -31,14 +29,13 @@ describe('buildClaudeCliArgs', () => {
   });
 
   it('omits --resume when continuation is empty', () => {
-    const args = buildClaudeCliArgs({ prompt: 'Hi', cwd: '/workspace/agent' });
+    const args = buildClaudeCliArgs({ prompt: 'Hi' });
     expect(args).not.toContain('--resume');
   });
 
   it('appends --append-system-prompt when systemContext.instructions is set', () => {
     const args = buildClaudeCliArgs({
       prompt: 'Hi',
-      cwd: '/workspace/agent',
       systemContext: { instructions: 'Be terse.' },
     });
     const i = args.indexOf('--append-system-prompt');
@@ -49,7 +46,6 @@ describe('buildClaudeCliArgs', () => {
   it('appends --add-dir for each additionalDirectories entry', () => {
     const args = buildClaudeCliArgs({
       prompt: 'Hi',
-      cwd: '/workspace/agent',
       additionalDirectories: ['/workspace/extra/a', '/workspace/extra/b'],
     });
     const positions = args
@@ -61,7 +57,7 @@ describe('buildClaudeCliArgs', () => {
   });
 
   it('serializes allowed/disallowed tools as comma-separated strings', () => {
-    const args = buildClaudeCliArgs({ prompt: 'Hi', cwd: '/workspace/agent' });
+    const args = buildClaudeCliArgs({ prompt: 'Hi' });
     const allowedAt = args.indexOf('--allowedTools');
     const disallowedAt = args.indexOf('--disallowedTools');
     expect(allowedAt).toBeGreaterThan(-1);
@@ -72,13 +68,13 @@ describe('buildClaudeCliArgs', () => {
   });
 
   it("places the prompt last after a '--' separator (defense against prompts that start with '--')", () => {
-    const args = buildClaudeCliArgs({ prompt: 'normal prompt', cwd: '/workspace/agent' });
+    const args = buildClaudeCliArgs({ prompt: 'normal prompt' });
     expect(args[args.length - 2]).toBe('--');
     expect(args[args.length - 1]).toBe('normal prompt');
   });
 
   it('does not let an attacker-controlled prompt sneak past flag parsing', () => {
-    const args = buildClaudeCliArgs({ prompt: '--mcp-config /tmp/evil.json', cwd: '/workspace/agent' });
+    const args = buildClaudeCliArgs({ prompt: '--mcp-config /tmp/evil.json' });
     // The malicious prompt is the LAST element AFTER '--', so the CLI's argv
     // parser stops interpreting flags before it and the original
     // --mcp-config <legit> earlier in args wins.
@@ -90,7 +86,6 @@ describe('buildClaudeCliArgs', () => {
   it('respects custom mcpConfigPath and settingsPath', () => {
     const args = buildClaudeCliArgs({
       prompt: 'Hi',
-      cwd: '/workspace/agent',
       mcpConfigPath: '/custom/mcp.json',
       settingsPath: '/custom/settings.json',
     });
