@@ -5,12 +5,15 @@
  * traffic). Hook scripts on disk enforce the same denylist + container_state
  * tracking the SDK provider does in-process.
  *
- * The class itself arrives in a later task; this file currently exports the
- * pure argv builder so it can be unit-tested in isolation.
+ * Module structure:
+ *   - `buildClaudeCliArgs` — pure argv builder.
+ *   - `translateStreamJsonLines` + `ClaudeCliChildAdapter` — pure parser.
+ *   - `ClaudeCliProvider` class — `Bun.spawn` lifecycle (spawn, drain,
+ *     translate, abort, register). Implements `AgentProvider`.
  */
 import { registerProvider } from './provider-registry.js';
 import { DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
-import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
+import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
 const DEFAULT_MCP_CONFIG_PATH = '/home/node/.claude/mcp.json';
 const DEFAULT_SETTINGS_PATH = '/home/node/.claude/settings.json';
@@ -209,13 +212,14 @@ export class ClaudeCliProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = true;
 
   private assistantName?: string;
-  private mcpServers: Record<string, McpServerConfig>;
   private env: Record<string, string | undefined>;
   private additionalDirectories?: string[];
 
   constructor(options: ProviderOptions = {}) {
+    // options.mcpServers is intentionally ignored: the host generates
+    // mcp.json and nested-RO-mounts it at /home/node/.claude/mcp.json,
+    // which the CLI loads via the --mcp-config flag baked into argv.
     this.assistantName = options.assistantName;
-    this.mcpServers = options.mcpServers ?? {};
     this.additionalDirectories = options.additionalDirectories;
     this.env = options.env ?? {};
   }
@@ -274,6 +278,7 @@ export class ClaudeCliProvider implements AgentProvider {
     };
 
     let aborted = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
     const capturedSpawnError = spawnError;
     const capturedChild = child;
 
@@ -299,6 +304,10 @@ export class ClaudeCliProvider implements AgentProvider {
         log('push() called but ignored — claude-cli provider is single-turn per spawn');
       },
       end: () => {
+        if (killTimer) {
+          clearTimeout(killTimer);
+          killTimer = null;
+        }
         try {
           capturedChild?.kill('SIGTERM');
         } catch {
@@ -312,7 +321,8 @@ export class ClaudeCliProvider implements AgentProvider {
         } catch {
           /* already dead */
         }
-        setTimeout(() => {
+        killTimer = setTimeout(() => {
+          killTimer = null;
           try {
             capturedChild?.kill('SIGKILL');
           } catch {
