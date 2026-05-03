@@ -5,57 +5,12 @@ import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '
 
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
 import { registerProvider } from './provider-registry.js';
+import { SDK_DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
 import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
 function log(msg: string): void {
   console.error(`[claude-provider] ${msg}`);
 }
-
-// Deferred SDK builtins that either sidestep nanoclaw's own scheduling or
-// don't fit our async message-passing model (they're designed for Claude
-// Code's interactive UI and would hang here).
-//
-// - CronCreate / CronDelete / CronList / ScheduleWakeup: we have durable
-//   scheduling via mcp__nanoclaw__schedule_task.
-// - AskUserQuestion: SDK returns a placeholder instead of blocking on a
-//   real answer — we have mcp__nanoclaw__ask_user_question that persists
-//   the question and blocks on the real reply.
-// - EnterPlanMode / ExitPlanMode / EnterWorktree / ExitWorktree: Claude
-//   Code UI affordances; in a headless container they'd appear stuck.
-const SDK_DISALLOWED_TOOLS = [
-  'CronCreate',
-  'CronDelete',
-  'CronList',
-  'ScheduleWakeup',
-  'AskUserQuestion',
-  'EnterPlanMode',
-  'ExitPlanMode',
-  'EnterWorktree',
-  'ExitWorktree',
-];
-
-// Tool allowlist for NanoClaw agent containers
-const TOOL_ALLOWLIST = [
-  'Bash',
-  'Read',
-  'Write',
-  'Edit',
-  'Glob',
-  'Grep',
-  'WebSearch',
-  'WebFetch',
-  'Task',
-  'TaskOutput',
-  'TaskStop',
-  'TeamCreate',
-  'TeamDelete',
-  'SendMessage',
-  'TodoWrite',
-  'ToolSearch',
-  'Skill',
-  'NotebookEdit',
-  'mcp__nanoclaw__*',
-];
 
 interface SDKUserMessage {
   type: 'user';
@@ -277,8 +232,8 @@ export class ClaudeProvider implements AgentProvider {
         resume: input.continuation,
         pathToClaudeCodeExecutable: '/pnpm/claude',
         systemPrompt: instructions ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions } : undefined,
-        allowedTools: TOOL_ALLOWLIST,
-        disallowedTools: SDK_DISALLOWED_TOOLS,
+        allowedTools: [...TOOL_ALLOWLIST],
+        disallowedTools: [...SDK_DISALLOWED_TOOLS],
         env: this.env,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
