@@ -7,6 +7,24 @@ OAuth login — no `ANTHROPIC_API_KEY`, no OneCLI proxy for AI traffic.
 It coexists with the default `claude` (SDK) provider; the choice is
 per-agent-group via `container.json`.
 
+## Activate via setup wizard
+
+When you run `bash nanoclaw.sh`, the auth menu offers four options. Choose
+**"Use my host Claude Code CLI session"** to make `claude-cli` the default
+provider for every new agent group on this install. The wizard verifies
+that `claude` is on PATH and that `~/.claude/.credentials.json` exists; if
+either is missing, it fails with a clear message and you fix it on the host
+(`https://claude.ai/install.sh` to install, then `claude /login`) and re-run.
+
+The wizard sets `NANOCLAW_DEFAULT_PROVIDER=claude-cli` in `.env`.
+`scripts/init-cli-agent.ts` and `scripts/init-first-agent.ts` read that
+variable and write `"provider": "claude-cli"` into each new group's
+`container.json`. Existing groups are not modified.
+
+To switch a single group back to the SDK provider, edit
+`groups/<folder>/container.json` and remove the `provider` field (or set it
+to `"claude"`).
+
 ## Prerequisites
 
 Run `claude /login` on the host once. NanoClaw uses the resulting
