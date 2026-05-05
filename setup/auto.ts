@@ -700,6 +700,14 @@ async function runAuthStep(): Promise<void> {
     return;
   }
 
+  const cliEnv = readEnvLine('NANOCLAW_DEFAULT_PROVIDER');
+  const cliCreds = fs.existsSync(path.join(os.homedir(), '.claude', '.credentials.json'));
+  if (cliEnv === 'claude-cli' && cliCreds) {
+    p.log.success(brandBody('Host Claude CLI session detected.'));
+    setupLog.step('auth', 'skipped', 0, { REASON: 'cli-already-configured' });
+    return;
+  }
+
   // Custom Anthropic-compatible endpoint flow. Both URL and token must be set;
   // OneCLI stores the token as a generic Bearer secret keyed to the URL host,
   // so the container only ever sees ANTHROPIC_BASE_URL + a placeholder.
