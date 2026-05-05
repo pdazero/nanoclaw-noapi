@@ -916,6 +916,13 @@ export function readEnvLine(key: string): string | null {
   return last;
 }
 
+export function checkCommandExists(name: string): boolean {
+  // `command -v` is a POSIX shell builtin; sh -c is portable across mac/linux.
+  // Caller is trusted (constant binary names from setup), no injection risk.
+  const result = spawnSync('sh', ['-c', `command -v ${name}`], { stdio: 'ignore' });
+  return result.status === 0;
+}
+
 function appendProviderImport(modulePath: string): void {
   const file = path.join(process.cwd(), 'src', 'providers', 'index.ts');
   const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
