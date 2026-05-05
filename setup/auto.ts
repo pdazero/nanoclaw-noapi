@@ -893,7 +893,7 @@ async function runCustomEndpointAuth(
   appendProviderImport('./claude.js');
 }
 
-function writeEnvLine(key: string, value: string): void {
+export function writeEnvLine(key: string, value: string): void {
   const envFile = path.join(process.cwd(), '.env');
   const content = fs.existsSync(envFile) ? fs.readFileSync(envFile, 'utf-8') : '';
   const re = new RegExp(`^${key}=.*$`, 'm');
@@ -901,6 +901,19 @@ function writeEnvLine(key: string, value: string): void {
     ? content.replace(re, `${key}=${value}`)
     : content.trimEnd() + (content ? '\n' : '') + `${key}=${value}\n`;
   fs.writeFileSync(envFile, next);
+}
+
+export function readEnvLine(key: string): string | null {
+  const envFile = path.join(process.cwd(), '.env');
+  if (!fs.existsSync(envFile)) return null;
+  const content = fs.readFileSync(envFile, 'utf-8');
+  const re = new RegExp(`^${key}=(.*)$`, 'gm');
+  let match: RegExpExecArray | null;
+  let last: string | null = null;
+  while ((match = re.exec(content)) !== null) {
+    last = match[1].trimEnd();
+  }
+  return last;
 }
 
 function appendProviderImport(modulePath: string): void {
