@@ -58,9 +58,7 @@ function controlDir(sessionDir: string, agentGroupId: string): string {
     // creds to the wrong path. The runner builds <sessionDir> from
     // sessionDir(agentGroup.id, session.id) — basename(dirname(sessionDir))
     // must equal agentGroupId by construction.
-    throw new Error(
-      `claude-cli: unexpected sessionDir layout — expected basename(${groupDir}) === '${agentGroupId}'`,
-    );
+    throw new Error(`claude-cli: unexpected sessionDir layout — expected basename(${groupDir}) === '${agentGroupId}'`);
   }
   return path.join(groupDir, '.claude-cli-control', sessionId);
 }
@@ -95,11 +93,7 @@ registerProviderContainerConfig('claude-cli', (ctx) => {
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(SETTINGS_TEMPLATE, null, 2));
   fs.writeFileSync(
     path.join(dir, 'mcp.json'),
-    JSON.stringify(
-      { mcpServers: { nanoclaw: NANOCLAW_BUILTIN_MCP, ...ctx.containerConfig.mcpServers } },
-      null,
-      2,
-    ),
+    JSON.stringify({ mcpServers: { nanoclaw: NANOCLAW_BUILTIN_MCP, ...ctx.containerConfig.mcpServers } }, null, 2),
   );
 
   const mounts: VolumeMount[] = [
