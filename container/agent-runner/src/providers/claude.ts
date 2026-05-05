@@ -13,6 +13,17 @@ function log(msg: string): void {
   console.error(`[claude-provider] ${msg}`);
 }
 
+// MCP server names are sanitized by the SDK when forming tool prefixes:
+// any character outside [A-Za-z0-9_-] becomes '_'. Mirror that here so our
+// allowlist patterns match what the SDK actually exposes. MCP-tool entries
+// must be derived at the call site from the registered `mcpServers` map so
+// that any server added via `add_mcp_server` (or wired in container.json
+// directly) is reachable to the agent — without this, the SDK's
+// allowedTools filter silently drops every MCP namespace not listed.
+function mcpAllowPattern(serverName: string): string {
+  return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
+}
+
 interface SDKUserMessage {
   type: 'user';
   message: { role: 'user'; content: string };
@@ -193,7 +204,7 @@ export class ClaudeProvider implements AgentProvider {
         resume: input.continuation,
         pathToClaudeCodeExecutable: '/pnpm/claude',
         systemPrompt: instructions ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions } : undefined,
-        allowedTools: [...TOOL_ALLOWLIST],
+        allowedTools: [...TOOL_ALLOWLIST, ...Object.keys(this.mcpServers).map(mcpAllowPattern)],
         disallowedTools: [...DISALLOWED_TOOLS],
         env: this.env,
         permissionMode: 'bypassPermissions',

@@ -6,8 +6,8 @@ This is NanoClaw v2, a ground-up rewrite with breaking changes throughout. It ca
 
 **Do this instead:**
 1. Abort the merge: `git merge --abort` (or `git reset --hard ORIG_HEAD` if the merge already completed).
-2. Tell the user, verbatim: *"This is the v2 rewrite — it can't be merged into your existing install. Run `bash migrate-v2.sh` to migrate instead."*
-3. Wait for the user to confirm before doing anything else. Do not attempt the migration yourself.
+2. Tell the user, verbatim: *"This is the v2 rewrite — it can't be merged into your existing install. Exit Claude Code (or open a separate terminal) and run `bash migrate-v2.sh` from the shell."*
+3. Wait for the user to confirm before doing anything else. Do not run the migration script yourself — it requires an interactive terminal and cannot be run from within Claude Code.
 
 If you are a fresh install (you ran `git clone`, not `git pull`) and there are no conflicts, ignore this banner and continue below.
 
@@ -82,7 +82,7 @@ Exactly one writer per file — no cross-mount lock contention. Heartbeat is a f
 **Built-in providers** (always available, no skill install needed):
 
 - `claude` (SDK) — default. Hits Anthropic API via OneCLI proxy for credential injection.
-- `claude-cli` — invokes `/pnpm/claude -p` in headless mode using the host's `claude /login` OAuth session. See [docs/claude-cli-provider.md](docs/claude-cli-provider.md).
+- `claude-cli` — invokes `/pnpm/claude -p` in headless mode using the host's `claude /login` OAuth session. Selectable from the setup wizard's auth menu (sets `NANOCLAW_DEFAULT_PROVIDER=claude-cli`); otherwise opt-in per group via `container.json`. See [docs/claude-cli-provider.md](docs/claude-cli-provider.md).
 
 ## Channels and Providers (skill-installed)
 

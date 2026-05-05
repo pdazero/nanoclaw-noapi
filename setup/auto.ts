@@ -60,7 +60,7 @@ import { isValidTimezone } from '../src/timezone.js';
 const CLI_AGENT_NAME = 'Terminal Agent';
 const RUN_START = Date.now();
 
-type ChannelChoice = 'telegram' | 'discord' | 'whatsapp' | 'signal' | 'teams' | 'slack' | 'imessage' | 'skip';
+type ChannelChoice = 'telegram' | 'discord' | 'whatsapp' | 'signal' | 'teams' | 'slack' | 'imessage' | 'other' | 'skip';
 
 async function main(): Promise<void> {
   // Make sure ~/.local/bin is on PATH for every child process we spawn.
@@ -441,7 +441,7 @@ async function main(): Promise<void> {
 
   if (!skip.has('channel')) {
     channelChoice = await askChannelChoice();
-    if (channelChoice !== 'skip') {
+    if (channelChoice !== 'skip' && channelChoice !== 'other') {
       await resolveDisplayName();
     }
     if (channelChoice === 'telegram') {
@@ -458,6 +458,8 @@ async function main(): Promise<void> {
       await runSlackChannel(displayName!);
     } else if (channelChoice === 'imessage') {
       await runIMessageChannel(displayName!);
+    } else if (channelChoice === 'other') {
+      await askOtherChannelName();
     } else {
       p.log.info(
         brandBody(
@@ -698,6 +700,14 @@ async function runAuthStep(): Promise<void> {
     return;
   }
 
+  const cliEnv = readEnvLine('NANOCLAW_DEFAULT_PROVIDER');
+  const cliCreds = fs.existsSync(path.join(os.homedir(), '.claude', '.credentials.json'));
+  if (cliEnv === 'claude-cli' && cliCreds) {
+    p.log.success(brandBody('Host Claude CLI session detected.'));
+    setupLog.step('auth', 'skipped', 0, { REASON: 'cli-already-configured' });
+    return;
+  }
+
   // Custom Anthropic-compatible endpoint flow. Both URL and token must be set;
   // OneCLI stores the token as a generic Bearer secret keyed to the URL host,
   // so the container only ever sees ANTHROPIC_BASE_URL + a placeholder.
@@ -718,6 +728,11 @@ async function runAuthStep(): Promise<void> {
           hint: 'recommended if you have Pro or Max',
         },
         {
+          value: 'cli',
+          label: 'Use my host Claude Code CLI session',
+          hint: 'OAuth-only, no proxy — requires `claude /login` on the host',
+        },
+        {
           value: 'oauth',
           label: 'Paste an OAuth token I already have',
           hint: 'sk-ant-oat…',
@@ -729,12 +744,14 @@ async function runAuthStep(): Promise<void> {
         },
       ],
     }),
-  ) as 'subscription' | 'oauth' | 'api';
+  ) as 'subscription' | 'cli' | 'oauth' | 'api';
   setupLog.userInput('auth_method', method);
   phEmit('auth_method_chosen', { method });
 
   if (method === 'subscription') {
     await runSubscriptionAuth();
+  } else if (method === 'cli') {
+    await runHostCliAuth();
   } else {
     await runPasteAuth(method);
   }
@@ -891,7 +908,41 @@ async function runCustomEndpointAuth(
   appendProviderImport('./claude.js');
 }
 
-function writeEnvLine(key: string, value: string): void {
+async function runHostCliAuth(): Promise<void> {
+  const start = Date.now();
+
+  if (!checkCommandExists('claude')) {
+    setupLog.step('auth', 'failed', Date.now() - start, {
+      METHOD: 'cli',
+      REASON: 'cli-not-installed',
+    });
+    await fail(
+      'auth',
+      'Claude Code CLI not found on PATH.',
+      'Install it from https://claude.ai/install.sh, run `claude /login`, then re-run setup.',
+    );
+  }
+
+  const credsPath = path.join(os.homedir(), '.claude', '.credentials.json');
+  if (!fs.existsSync(credsPath)) {
+    setupLog.step('auth', 'failed', Date.now() - start, {
+      METHOD: 'cli',
+      REASON: 'host-not-logged-in',
+    });
+    await fail(
+      'auth',
+      'No host Claude login found.',
+      'Run `claude /login` on the host first, then re-run setup.',
+    );
+  }
+
+  writeEnvLine('NANOCLAW_DEFAULT_PROVIDER', 'claude-cli');
+
+  setupLog.step('auth', 'success', Date.now() - start, { METHOD: 'cli' });
+  p.log.success(brandBody('Host Claude CLI session detected.'));
+}
+
+export function writeEnvLine(key: string, value: string): void {
   const envFile = path.join(process.cwd(), '.env');
   const content = fs.existsSync(envFile) ? fs.readFileSync(envFile, 'utf-8') : '';
   const re = new RegExp(`^${key}=.*$`, 'm');
@@ -899,6 +950,26 @@ function writeEnvLine(key: string, value: string): void {
     ? content.replace(re, `${key}=${value}`)
     : content.trimEnd() + (content ? '\n' : '') + `${key}=${value}\n`;
   fs.writeFileSync(envFile, next);
+}
+
+export function readEnvLine(key: string): string | null {
+  const envFile = path.join(process.cwd(), '.env');
+  if (!fs.existsSync(envFile)) return null;
+  const content = fs.readFileSync(envFile, 'utf-8');
+  const re = new RegExp(`^${key}=(.*)$`, 'gm');
+  let match: RegExpExecArray | null;
+  let last: string | null = null;
+  while ((match = re.exec(content)) !== null) {
+    last = match[1].trimEnd();
+  }
+  return last;
+}
+
+export function checkCommandExists(name: string): boolean {
+  // `command -v` is a POSIX shell builtin; sh -c is portable across mac/linux.
+  // Caller is trusted (constant binary names from setup), no injection risk.
+  const result = spawnSync('sh', ['-c', `command -v ${name}`], { stdio: 'ignore' });
+  return result.status === 0;
 }
 
 function appendProviderImport(modulePath: string): void {
@@ -1076,6 +1147,7 @@ async function askChannelChoice(): Promise<ChannelChoice> {
           hint: 'needs public URL',
         },
         { value: 'teams', label: 'Yes, connect Microsoft Teams', hint: 'complex setup' },
+        { value: 'other', label: 'Other…', hint: 'install via /add-<name> after setup' },
         { value: 'skip', label: 'Skip for now', hint: "I'll just use the terminal" },
       ],
     }),
@@ -1083,6 +1155,26 @@ async function askChannelChoice(): Promise<ChannelChoice> {
   setupLog.userInput('channel_choice', String(choice));
   phEmit('channel_chosen', { channel: String(choice) });
   return choice;
+}
+
+async function askOtherChannelName(): Promise<void> {
+  const answer = ensureAnswer(
+    await p.text({
+      message: 'Which channel would you like to install?',
+      placeholder: 'e.g. matrix, github, linear, webex',
+    }),
+  );
+  const name = (answer as string).trim().toLowerCase().replace(/^\/?(add-)?/, '');
+  setupLog.userInput('other_channel', name);
+  phEmit('channel_other_named', { channel: name });
+  p.log.info(
+    brandBody(
+      wrapForGutter(
+        `No bash installer for ${k.bold(name)} — open Claude Code after setup and run ${k.bold(`/add-${name}`)} to install it.`,
+        4,
+      ),
+    ),
+  );
 }
 
 // ─── interactive / env helpers ─────────────────────────────────────────

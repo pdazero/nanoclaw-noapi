@@ -32,6 +32,7 @@ import { runMigrations } from '../src/db/migrations/index.js';
 import { normalizeName } from '../src/modules/agent-to-agent/db/agent-destinations.js';
 import { upsertUser } from '../src/modules/permissions/db/users.js';
 import { initGroupFilesystem } from '../src/group-init.js';
+import { applyDefaultProvider } from './lib/apply-default-provider.js';
 import type { AgentGroup, MessagingGroup } from '../src/types.js';
 
 const CLI_CHANNEL = 'cli';
@@ -114,6 +115,7 @@ async function main(): Promise<void> {
     });
     ag = getAgentGroupByFolder(folder)!;
     console.log(`Created agent group: ${ag.id} (${folder})`);
+    applyDefaultProvider(ag.folder);
   } else {
     console.log(`Reusing agent group: ${ag.id} (${folder})`);
   }

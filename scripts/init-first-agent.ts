@@ -47,6 +47,7 @@ import { normalizeName } from '../src/modules/agent-to-agent/db/agent-destinatio
 import { addMember } from '../src/modules/permissions/db/agent-group-members.js';
 import { getUserRoles, grantRole } from '../src/modules/permissions/db/user-roles.js';
 import { upsertUser } from '../src/modules/permissions/db/users.js';
+import { applyDefaultProvider } from './lib/apply-default-provider.js';
 import { initGroupFilesystem } from '../src/group-init.js';
 import { namespacedPlatformId } from '../src/platform-id.js';
 import type { AgentGroup, MessagingGroup } from '../src/types.js';
@@ -200,6 +201,7 @@ async function main(): Promise<void> {
     });
     ag = getAgentGroupByFolder(folder)!;
     console.log(`Created agent group: ${ag.id} (${folder})`);
+    applyDefaultProvider(ag.folder);
   } else {
     console.log(`Reusing agent group: ${ag.id} (${folder})`);
   }
