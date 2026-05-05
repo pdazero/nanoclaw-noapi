@@ -28,7 +28,10 @@
  */
 import type Database from 'better-sqlite3';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
+import { DATA_DIR } from './config.js';
 import { getActiveSessions } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import {
@@ -123,6 +126,14 @@ async function sweep(): Promise<void> {
 
   try {
     const sessions = getActiveSessions();
+    resyncClaudeCliCredentials({
+      hostCreds: path.join(os.homedir(), '.claude', '.credentials.json'),
+      sessions: sessions.map((s) => ({
+        agentGroupId: s.agent_group_id,
+        sessionId: s.id,
+        dataDir: DATA_DIR,
+      })),
+    });
     for (const session of sessions) {
       await sweepSession(session);
     }
@@ -248,6 +259,53 @@ function enforceRunningContainerSla(
   });
   killContainer(session.id, 'claim-stuck');
   resetStuckProcessingRows(inDb, outDb, session, 'claim-stuck');
+}
+
+interface ResyncInput {
+  hostCreds: string;
+  sessions: Array<{ agentGroupId: string; sessionId: string; dataDir: string }>;
+}
+
+/**
+ * Per-tick resync of OAuth credentials for any session that has a
+ * claude-cli control dir. Runs in the same loop that does
+ * processing_ack syncs so we don't add a second timer.
+ *
+ * Cheap when nothing has changed: O(active sessions) stat calls + a
+ * single mtime compare each. Real work only when the host has run
+ * `claude /login` since the last tick.
+ *
+ * Exported for testing under `_resyncClaudeCliCredentialsForTesting`.
+ */
+export function _resyncClaudeCliCredentialsForTesting(input: ResyncInput): void {
+  resyncClaudeCliCredentials(input);
+}
+
+function resyncClaudeCliCredentials(input: ResyncInput): void {
+  if (!fs.existsSync(input.hostCreds)) return;
+  const hostMtimeMs = fs.statSync(input.hostCreds).mtimeMs;
+
+  for (const s of input.sessions) {
+    const controlDir = path.join(s.dataDir, 'v2-sessions', s.agentGroupId, '.claude-cli-control', s.sessionId);
+    const sessCreds = path.join(controlDir, '.credentials.json');
+    if (!fs.existsSync(sessCreds)) continue; // not a claude-cli session
+    const sessMtimeMs = fs.statSync(sessCreds).mtimeMs;
+    if (hostMtimeMs <= sessMtimeMs) continue;
+    try {
+      fs.copyFileSync(input.hostCreds, sessCreds);
+      fs.chmodSync(sessCreds, 0o600);
+      log.info('Refreshed claude-cli credentials for session', {
+        agentGroupId: s.agentGroupId,
+        sessionId: s.sessionId,
+      });
+    } catch (err) {
+      log.warn('Credentials resync failed', {
+        agentGroupId: s.agentGroupId,
+        sessionId: s.sessionId,
+        err,
+      });
+    }
+  }
 }
 
 export function _resetStuckProcessingRowsForTesting(

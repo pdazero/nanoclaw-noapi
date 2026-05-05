@@ -2,11 +2,16 @@ import { describe, it, expect } from 'bun:test';
 
 import { createProvider, type ProviderName } from './factory.js';
 import { ClaudeProvider } from './claude.js';
+import { ClaudeCliProvider } from './claude-cli.js';
 import { MockProvider } from './mock.js';
 
 describe('createProvider', () => {
   it('returns ClaudeProvider for claude', () => {
     expect(createProvider('claude')).toBeInstanceOf(ClaudeProvider);
+  });
+
+  it('returns ClaudeCliProvider for claude-cli', () => {
+    expect(createProvider('claude-cli')).toBeInstanceOf(ClaudeCliProvider);
   });
 
   it('returns MockProvider for mock', () => {

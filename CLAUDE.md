@@ -79,6 +79,11 @@ Exactly one writer per file — no cross-mount lock contention. Heartbeat is a f
 | `scripts/init-first-agent.ts` | Bootstrap the first DM-wired agent (used by `/init-first-agent` skill) |
 | `migrate-v2.sh` + `setup/migrate-v2/` | v1→v2 migration. Standalone script: `bash migrate-v2.sh`. Seeds DB, copies groups/sessions, installs channels, builds container, offers service switchover, then hands off to `/migrate-from-v1` skill for owner setup and CLAUDE.md cleanup. See [docs/migration-dev.md](docs/migration-dev.md). |
 
+**Built-in providers** (always available, no skill install needed):
+
+- `claude` (SDK) — default. Hits Anthropic API via OneCLI proxy for credential injection.
+- `claude-cli` — invokes `/pnpm/claude -p` in headless mode using the host's `claude /login` OAuth session. See [docs/claude-cli-provider.md](docs/claude-cli-provider.md).
+
 ## Channels and Providers (skill-installed)
 
 Trunk does not ship any specific channel adapter or non-default agent provider. The codebase is the registry/infra; the actual adapters and providers live on long-lived sibling branches and get copied in by skills:

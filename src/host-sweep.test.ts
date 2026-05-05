@@ -4,13 +4,17 @@
  * don't have to mock the filesystem or the container runner.
  */
 import Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { deleteOrphanProcessingClaims, getProcessingClaims } from './db/session-db.js';
 import {
   ABSOLUTE_CEILING_MS,
   CLAIM_STUCK_MS,
   _resetStuckProcessingRowsForTesting,
+  _resyncClaudeCliCredentialsForTesting,
   decideStuckAction,
 } from './host-sweep.js';
 import type { Session } from './types.js';
@@ -290,5 +294,83 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
     expect(getProcessingClaims(outDb)).toEqual([]);
     const row = inDb.prepare('SELECT tries FROM messages_in WHERE id = ?').get('m-2') as { tries: number };
     expect(row.tries).toBe(1); // not bumped, the skip path held
+  });
+});
+
+describe('claude-cli credentials resync (sweep)', () => {
+  let tmpHome: string;
+  let tmpData: string;
+
+  beforeEach(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-cli-home-'));
+    tmpData = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-cli-data-'));
+    vi.spyOn(os, 'homedir').mockReturnValue(tmpHome);
+    fs.mkdirSync(path.join(tmpHome, '.claude'), { recursive: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+    fs.rmSync(tmpData, { recursive: true, force: true });
+  });
+
+  it('overwrites session credentials when the host master is newer', () => {
+    const hostCreds = path.join(tmpHome, '.claude', '.credentials.json');
+    fs.writeFileSync(hostCreds, 'host-new');
+    const newer = new Date('2026-01-01');
+    fs.utimesSync(hostCreds, newer, newer);
+
+    const sessCreds = path.join(tmpData, 'v2-sessions', 'g1', '.claude-cli-control', 's1', '.credentials.json');
+    fs.mkdirSync(path.dirname(sessCreds), { recursive: true });
+    fs.writeFileSync(sessCreds, 'session-old');
+    const older = new Date('2020-01-01');
+    fs.utimesSync(sessCreds, older, older);
+
+    _resyncClaudeCliCredentialsForTesting({
+      hostCreds,
+      sessions: [{ agentGroupId: 'g1', sessionId: 's1', dataDir: tmpData }],
+    });
+
+    expect(fs.readFileSync(sessCreds, 'utf-8')).toBe('host-new');
+  });
+
+  it('is a no-op when host master is older than session copy', () => {
+    const hostCreds = path.join(tmpHome, '.claude', '.credentials.json');
+    fs.writeFileSync(hostCreds, 'host-old');
+    const older = new Date('2020-01-01');
+    fs.utimesSync(hostCreds, older, older);
+
+    const sessCreds = path.join(tmpData, 'v2-sessions', 'g1', '.claude-cli-control', 's1', '.credentials.json');
+    fs.mkdirSync(path.dirname(sessCreds), { recursive: true });
+    fs.writeFileSync(sessCreds, 'session-newer');
+    const newer = new Date('2026-01-01');
+    fs.utimesSync(sessCreds, newer, newer);
+
+    _resyncClaudeCliCredentialsForTesting({
+      hostCreds,
+      sessions: [{ agentGroupId: 'g1', sessionId: 's1', dataDir: tmpData }],
+    });
+
+    expect(fs.readFileSync(sessCreds, 'utf-8')).toBe('session-newer');
+  });
+
+  it("skips sessions whose control dir doesn't exist (not a claude-cli session)", () => {
+    const hostCreds = path.join(tmpHome, '.claude', '.credentials.json');
+    fs.writeFileSync(hostCreds, 'host');
+    expect(() =>
+      _resyncClaudeCliCredentialsForTesting({
+        hostCreds,
+        sessions: [{ agentGroupId: 'g1', sessionId: 's1', dataDir: tmpData }],
+      }),
+    ).not.toThrow();
+  });
+
+  it('is a no-op when host master is missing (user has not logged in)', () => {
+    expect(() =>
+      _resyncClaudeCliCredentialsForTesting({
+        hostCreds: path.join(tmpHome, '.claude', '.credentials.json'), // doesn't exist
+        sessions: [{ agentGroupId: 'g1', sessionId: 's1', dataDir: tmpData }],
+      }),
+    ).not.toThrow();
   });
 });
