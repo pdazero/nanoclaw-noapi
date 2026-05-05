@@ -82,7 +82,7 @@ Exactly one writer per file — no cross-mount lock contention. Heartbeat is a f
 **Built-in providers** (always available, no skill install needed):
 
 - `claude` (SDK) — default. Hits Anthropic API via OneCLI proxy for credential injection.
-- `claude-cli` — invokes `/pnpm/claude -p` in headless mode using the host's `claude /login` OAuth session. See [docs/claude-cli-provider.md](docs/claude-cli-provider.md).
+- `claude-cli` — invokes `/pnpm/claude -p` in headless mode using the host's `claude /login` OAuth session. Selectable from the setup wizard's auth menu (sets `NANOCLAW_DEFAULT_PROVIDER=claude-cli`); otherwise opt-in per group via `container.json`. See [docs/claude-cli-provider.md](docs/claude-cli-provider.md).
 
 ## Channels and Providers (skill-installed)
 
