@@ -419,71 +419,56 @@ git commit -m "feat(setup): skip auth step when claude-cli is already configured
 
 - [ ] **Step 1: Write the failing test**
 
+`GROUPS_DIR` is computed once from `process.cwd()` when `src/config.ts` first loads, so we can't redirect it via env var or chdir from the test. Instead we mock `updateContainerConfig` (the only side effect of the helper) and assert on what it would have been called with.
+
 Create `scripts/apply-default-provider.test.ts`:
 
 ```ts
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const updateContainerConfig = vi.fn();
+
+vi.mock('../src/container-config.js', () => ({
+  updateContainerConfig,
+}));
 
 import { applyDefaultProvider } from './lib/apply-default-provider.js';
 
 describe('applyDefaultProvider', () => {
-  let tmp: string;
-  let prevGroupsDir: string | undefined;
-  const folder = 'test-group';
-
   beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-applyprov-'));
-    fs.mkdirSync(path.join(tmp, folder), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmp, folder, 'container.json'),
-      JSON.stringify({ mcpServers: {}, packages: { apt: [], npm: [] }, additionalMounts: [], skills: 'all' }) + '\n',
-    );
-    prevGroupsDir = process.env.NANOCLAW_GROUPS_DIR;
-    process.env.NANOCLAW_GROUPS_DIR = tmp;
+    updateContainerConfig.mockReset();
   });
 
   afterEach(() => {
-    if (prevGroupsDir === undefined) delete process.env.NANOCLAW_GROUPS_DIR;
-    else process.env.NANOCLAW_GROUPS_DIR = prevGroupsDir;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    delete process.env.NANOCLAW_DEFAULT_PROVIDER;
   });
-
-  function readContainer(): { provider?: string } {
-    return JSON.parse(fs.readFileSync(path.join(tmp, folder, 'container.json'), 'utf-8')) as { provider?: string };
-  }
 
   it('writes the provider field when NANOCLAW_DEFAULT_PROVIDER is set', () => {
     process.env.NANOCLAW_DEFAULT_PROVIDER = 'claude-cli';
-    try {
-      applyDefaultProvider(folder);
-    } finally {
-      delete process.env.NANOCLAW_DEFAULT_PROVIDER;
-    }
-    expect(readContainer().provider).toBe('claude-cli');
+    applyDefaultProvider('some-group');
+
+    expect(updateContainerConfig).toHaveBeenCalledTimes(1);
+    expect(updateContainerConfig.mock.calls[0][0]).toBe('some-group');
+
+    // Apply the mutator on a stub config and verify the field is set.
+    const mutator = updateContainerConfig.mock.calls[0][1] as (c: { provider?: string }) => void;
+    const stub: { provider?: string } = {};
+    mutator(stub);
+    expect(stub.provider).toBe('claude-cli');
   });
 
   it('is a no-op when NANOCLAW_DEFAULT_PROVIDER is unset', () => {
-    delete process.env.NANOCLAW_DEFAULT_PROVIDER;
-    applyDefaultProvider(folder);
-    expect(readContainer().provider).toBeUndefined();
+    applyDefaultProvider('some-group');
+    expect(updateContainerConfig).not.toHaveBeenCalled();
   });
 
   it('is a no-op when NANOCLAW_DEFAULT_PROVIDER is empty string', () => {
     process.env.NANOCLAW_DEFAULT_PROVIDER = '';
-    try {
-      applyDefaultProvider(folder);
-    } finally {
-      delete process.env.NANOCLAW_DEFAULT_PROVIDER;
-    }
-    expect(readContainer().provider).toBeUndefined();
+    applyDefaultProvider('some-group');
+    expect(updateContainerConfig).not.toHaveBeenCalled();
   });
 });
 ```
-
-> **Note on `NANOCLAW_GROUPS_DIR`:** check `src/config.ts` to confirm `GROUPS_DIR` is overridable via env var. If it isn't, the test must change cwd to `tmp` and rely on the default `groups/` resolution instead. Pick whichever matches the existing `src/config.ts` pattern. Do NOT change `src/config.ts` for this — adapt the test.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -800,4 +785,4 @@ This task only verifies. If any step fails, return to the corresponding earlier 
 - **Spec coverage:** sections 1 (UX) → Tasks 3+4; section 2 (persistence) → Tasks 1, 5, 6, 7, 8; section 3 (touch points) → Tasks 1-10; section 4 (edge cases): the verify-only behavior of Task 4 covers (a); idempotency Task 5 covers (c); per-group override is documented in Task 9; custom-endpoint left untouched (e); single-turn provider compatibility (f) is implicit (no code change needed); skills compatibility (g) is doc-only and out of scope, mentioned in Task 9.
 - **Type consistency:** the helper is named `applyDefaultProvider` in Tasks 6, 7, 8. The auth method value `'cli'` is used consistently in Tasks 3 and 4. `NANOCLAW_DEFAULT_PROVIDER` is the env var name in every task that touches it.
 - **No placeholders:** every code block is concrete.
-- **Notable risk:** Task 6's test assumes `GROUPS_DIR` is overridable by `NANOCLAW_GROUPS_DIR` — the task includes a fallback note to read `src/config.ts` and adapt the test if not, rather than mutate `config.ts`.
+- **Notable risk:** Task 6 mocks `updateContainerConfig` rather than touching real files. End-to-end propagation (env var → real `container.json`) is verified by the smoke run in Task 7 Step 3 and the manual wizard check in Task 11 Step 2.
