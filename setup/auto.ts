@@ -720,6 +720,11 @@ async function runAuthStep(): Promise<void> {
           hint: 'recommended if you have Pro or Max',
         },
         {
+          value: 'cli',
+          label: 'Use my host Claude Code CLI session',
+          hint: 'OAuth-only, no proxy — requires `claude /login` on the host',
+        },
+        {
           value: 'oauth',
           label: 'Paste an OAuth token I already have',
           hint: 'sk-ant-oat…',
@@ -731,12 +736,14 @@ async function runAuthStep(): Promise<void> {
         },
       ],
     }),
-  ) as 'subscription' | 'oauth' | 'api';
+  ) as 'subscription' | 'cli' | 'oauth' | 'api';
   setupLog.userInput('auth_method', method);
   phEmit('auth_method_chosen', { method });
 
   if (method === 'subscription') {
     await runSubscriptionAuth();
+  } else if (method === 'cli') {
+    await runHostCliAuth();
   } else {
     await runPasteAuth(method);
   }
@@ -891,6 +898,40 @@ async function runCustomEndpointAuth(
   // user has configured a custom endpoint; standard installs don't load
   // the file at all.
   appendProviderImport('./claude.js');
+}
+
+async function runHostCliAuth(): Promise<void> {
+  const start = Date.now();
+
+  if (!checkCommandExists('claude')) {
+    setupLog.step('auth', 'failed', Date.now() - start, {
+      METHOD: 'cli',
+      REASON: 'cli-not-installed',
+    });
+    await fail(
+      'auth',
+      'Claude Code CLI not found on PATH.',
+      'Install it from https://claude.ai/install.sh, run `claude /login`, then re-run setup.',
+    );
+  }
+
+  const credsPath = path.join(os.homedir(), '.claude', '.credentials.json');
+  if (!fs.existsSync(credsPath)) {
+    setupLog.step('auth', 'failed', Date.now() - start, {
+      METHOD: 'cli',
+      REASON: 'host-not-logged-in',
+    });
+    await fail(
+      'auth',
+      'No host Claude login found.',
+      'Run `claude /login` on the host first, then re-run setup.',
+    );
+  }
+
+  writeEnvLine('NANOCLAW_DEFAULT_PROVIDER', 'claude-cli');
+
+  setupLog.step('auth', 'success', Date.now() - start, { METHOD: 'cli' });
+  p.log.success(brandBody('Host Claude CLI session detected.'));
 }
 
 export function writeEnvLine(key: string, value: string): void {
