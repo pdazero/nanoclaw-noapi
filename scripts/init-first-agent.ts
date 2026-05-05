@@ -201,6 +201,7 @@ async function main(): Promise<void> {
     });
     ag = getAgentGroupByFolder(folder)!;
     console.log(`Created agent group: ${ag.id} (${folder})`);
+    applyDefaultProvider(ag.folder);
   } else {
     console.log(`Reusing agent group: ${ag.id} (${folder})`);
   }
@@ -210,7 +211,6 @@ async function main(): Promise<void> {
       `You are ${args.agentName}, a personal NanoClaw agent for ${args.displayName}. ` +
       'When the user first reaches out (or you receive a system welcome prompt), introduce yourself briefly and invite them to chat. Keep replies concise.',
   });
-  applyDefaultProvider(ag.folder);
 
   // 2b. Assign the user a role for this agent group. The caller picks via
   // --role; the channel drivers default to 'owner' for the self-host case.

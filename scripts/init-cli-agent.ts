@@ -115,6 +115,7 @@ async function main(): Promise<void> {
     });
     ag = getAgentGroupByFolder(folder)!;
     console.log(`Created agent group: ${ag.id} (${folder})`);
+    applyDefaultProvider(ag.folder);
   } else {
     console.log(`Reusing agent group: ${ag.id} (${folder})`);
   }
@@ -124,7 +125,6 @@ async function main(): Promise<void> {
       `You are ${args.agentName}, a personal NanoClaw agent for ${args.displayName}. ` +
       'When the user first reaches out, introduce yourself briefly and invite them to chat. Keep replies concise.',
   });
-  applyDefaultProvider(ag.folder);
 
   // 3. CLI messaging group + wiring.
   let cliMg: MessagingGroup | undefined = getMessagingGroupByPlatform(CLI_CHANNEL, CLI_PLATFORM_ID);
