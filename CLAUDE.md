@@ -180,17 +180,42 @@ Run commands directly — don't tell the user to run them.
 
 ```bash
 # Host (Node + pnpm)
-pnpm run dev          # Host with hot reload
-pnpm run build        # Compile host TypeScript (src/)
+pnpm run dev          # Host with hot reload (tsx)
+pnpm run build        # Compile host TypeScript (src/ → dist/)
+pnpm run typecheck    # tsc --noEmit (host only)
+pnpm run lint         # eslint src/   (lint:fix to autofix)
+pnpm run format:check # prettier --check (format:fix to autofix)
+pnpm test             # Host tests (vitest run)
 ./container/build.sh  # Rebuild agent container image (nanoclaw-agent:latest)
-pnpm test             # Host tests (vitest)
 
 # Agent-runner (Bun — separate package tree under container/agent-runner/)
-cd container/agent-runner && bun install   # After editing agent-runner deps
-cd container/agent-runner && bun test      # Container tests (bun:test)
+cd container/agent-runner && bun install        # After editing agent-runner deps
+cd container/agent-runner && bun test           # Container tests (bun:test)
+cd container/agent-runner && bun run typecheck  # Or: pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit (from root)
+
+# Single test — host
+pnpm exec vitest run path/to/file.test.ts        # Single file
+pnpm exec vitest run -t "name fragment"          # Filter by test name
+# Single test — container (Bun)
+cd container/agent-runner && bun test path/to/file.test.ts
+cd container/agent-runner && bun test -t "name fragment"
 ```
 
-Container typecheck is a separate tsconfig — if you edit `container/agent-runner/src/`, run `pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit` from root (or `bun run typecheck` from `container/agent-runner/`).
+Container typecheck is a separate tsconfig — host's `pnpm run typecheck` does NOT cover `container/agent-runner/src/`. The two trees have separate lockfiles, separate test runners (vitest vs `bun:test`), and separate sqlite drivers (`better-sqlite3` vs `bun:sqlite`).
+
+**Pre-commit hook**: `.husky/pre-commit` runs `pnpm run format:fix` automatically. If you commit and see a follow-up "files modified" diff, that's prettier — re-stage and amend or commit again.
+
+**Pre-PR checklist** (mirrors `.github/workflows/ci.yml`, all must pass):
+1. `pnpm run format:check`
+2. `pnpm exec tsc --noEmit` (host)
+3. `pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit` (container)
+4. `pnpm exec vitest run` (host tests)
+5. `cd container/agent-runner && bun test` (container tests)
+
+**ESLint custom rules** (`eslint.config.js`) — non-obvious, fix at source rather than disabling:
+- `preserve-caught-error` (error): every `catch` must declare its parameter (no bare `catch {}`).
+- `no-catch-all/no-catch-all` (warn): flags overly broad catches.
+- `@typescript-eslint/no-unused-vars`: `^_` prefix opts out (args, vars, caught errors, destructured).
 
 Service management:
 ```bash

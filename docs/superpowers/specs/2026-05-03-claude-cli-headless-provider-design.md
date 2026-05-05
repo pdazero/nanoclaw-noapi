@@ -94,6 +94,7 @@ export class ClaudeCliProvider implements AgentProvider {
       '--mcp-config', '/root/.claude/mcp.json',
       '--settings', '/root/.claude/settings.json',
       ...(this.additionalDirectories?.flatMap(d => ['--add-dir', d]) ?? []),
+      '--', // end-of-flags: garantiza que input.prompt no se reinterprete como flag
       input.prompt,
     ];
 
@@ -115,6 +116,8 @@ registerProvider('claude-cli', (opts) => new ClaudeCliProvider(opts));
 ```
 
 `TOOL_ALLOWLIST` y `SDK_DISALLOWED_TOOLS` son los mismos arrays que en `claude.ts:25–58` — extraídos a un módulo compartido (`providers/tool-policies.ts`) o duplicados explícitamente; decisión menor a tomar al implementar.
+
+**Nota de seguridad — separador `--` antes del prompt:** la inserción de `'--'` antes de `input.prompt` es deliberada. Aunque hoy el formatter (`container/agent-runner/src/formatter.ts`) garantiza que el prompt empiece con `<context ...>` o con `/` (para passthrough), esa propiedad es emergente del formatter + `categorizeMessage` y un refactor futuro podría romperla. El separador `--` hace que la garantía "el prompt nunca se reinterpreta como flags del CLI" sea local al provider y a costo cero. Sin él, un prompt con leading `--` (en un futuro flujo no contemplado hoy) podría sobrescribir `--mcp-config` / `--settings` con paths agente-controlados. Si el binario `claude` no acepta `--` como end-of-flags en su versión pinneada, fallback es pasar el prompt por stdin (`stdin: 'pipe'` + write).
 
 ### Parser de stream-json → ProviderEvent
 
@@ -276,7 +279,22 @@ data/v2-sessions/<session_id>/
     └── mcp.json            ← generado desde groupConfig.mcpServers
 ```
 
-Mount: `<sessionClaudeDir>:/root/.claude:rw`.
+**Mounts** (cuatro bind-mounts: una base RW + tres archivos RO anidados):
+
+```
+<sessionClaudeDir>:/root/.claude:rw                                  # base RW (CLI escribe projects/<...>.jsonl)
+<sessionClaudeDir>/settings.json:/root/.claude/settings.json:ro      # nested RO sobre el config de hooks
+<sessionClaudeDir>/mcp.json:/root/.claude/mcp.json:ro                # nested RO sobre el config MCP
+<sessionClaudeDir>/.credentials.json:/root/.claude/.credentials.json:ro  # nested RO sobre el token OAuth
+```
+
+**Razón** (modelo de seguridad): el agente corre con `Bash`/`Write`/`Edit` permitidos y `--dangerously-skip-permissions`. El directorio base debe ser RW porque el CLI necesita escribir su estado de sesión bajo `projects/`. Pero `settings.json`, `mcp.json` y `.credentials.json` son archivos de control que el CLI re-lee en cada spawn:
+
+- `settings.json` define los hooks que enforzan la denylist (`CronCreate`, `ScheduleWakeup`, etc.) y registran tools in-flight. Si el agente lo reescribe (`echo '{}' > /root/.claude/settings.json`), pierde toda la enforcement de hooks; peor aún, puede sustituir el comando del hook por una shell arbitraria que recibe `event.tool_input` por stdin (cuerpo de cada Bash, contenido de cada Write/Edit) y exfiltrar.
+- `mcp.json` lista servidores MCP; cada entrada `{command, args, env}` se ejecuta como subproceso al inicio de cada spawn. Reescribir el archivo da RCE inmediato en el siguiente turno con acceso al token OAuth en el mismo directorio.
+- `.credentials.json` es el token OAuth del CLI; el agente no lo necesita escribir, sólo el host vía resync de mtime.
+
+El patrón de RO anidado sobre RW ya está en uso en `src/container-runner.ts:273-294` para `container.json`, `CLAUDE.md` y `.claude-fragments` exactamente por este motivo. El provider `claude` (SDK) no tiene este problema porque registra hooks como callbacks JS in-process — no hay archivo on-disk que el agente pueda reescribir.
 
 Pseudocódigo del bloque agregado a `container-runner.ts`:
 
@@ -300,13 +318,25 @@ if (groupConfig.provider === 'claude-cli') {
     fs.chmodSync(sessionCreds, 0o600);
   }
 
+  // Regenerar settings.json y mcp.json desde el template en cada spawn.
+  // Defensa en profundidad: aunque ambos están montados RO al container,
+  // re-escribirlos en host garantiza que cualquier escritura previa del agente
+  // (vía path host equivalente, ej. via /workspace) se descarte antes del próximo spawn.
   fs.writeFileSync(path.join(sessionClaudeDir, 'settings.json'), CLAUDE_CLI_SETTINGS_TEMPLATE);
   fs.writeFileSync(
     path.join(sessionClaudeDir, 'mcp.json'),
     JSON.stringify({ mcpServers: groupConfig.mcpServers ?? {} }, null, 2),
   );
 
+  // Base RW (CLI necesita escribir projects/<...>.jsonl, etc).
   dockerMounts.push(`${sessionClaudeDir}:/root/.claude:rw`);
+  // Nested RO sobre los tres archivos de control que el CLI re-lee en cada spawn.
+  // Sin estos, el agente (con Bash/Write/Edit + bypassPermissions) puede reescribir
+  // settings.json para neutralizar hooks o reemplazar su comando por una shell arbitraria,
+  // o reescribir mcp.json para lograr RCE al lanzarse el siguiente servidor MCP.
+  dockerMounts.push(`${sessionClaudeDir}/settings.json:/root/.claude/settings.json:ro`);
+  dockerMounts.push(`${sessionClaudeDir}/mcp.json:/root/.claude/mcp.json:ro`);
+  dockerMounts.push(`${sessionClaudeDir}/.credentials.json:/root/.claude/.credentials.json:ro`);
 }
 ```
 
@@ -357,7 +387,7 @@ Si `src/db/agent-groups.ts` (o el módulo equivalente) tiene un enum literal de 
 
 | Archivo | Cobertura |
 |---|---|
-| `src/container-runner.test.ts` (extender) | Para grupo `claude-cli`: se crea `data/v2-sessions/<id>/claude/`, archivos populados, mount en la lista. Para grupo `claude` (SDK): nada de eso. Error EACCES y error-no-creds-in-host. mtime resync. |
+| `src/container-runner.test.ts` (extender) | Para grupo `claude-cli`: se crea `data/v2-sessions/<id>/claude/`, archivos populados, los **cuatro** mounts en la lista (RW base + 3× RO nested), en ese orden. Para grupo `claude` (SDK): nada de eso. Error EACCES y error-no-creds-in-host. mtime resync. Verificar que `<sessionClaudeDir>` no está incluido en otros mounts RW (ej. workspace); si la implementación cambia y lo expone, agregar test que falle. |
 | `src/host-sweep.test.ts` (extender, si aplica) | Resync de mtime para grupos con `claude-cli` durante el sweep. |
 
 **Sin E2E real contra el binario `claude`** — lento, requiere auth, inestable en CI. Validación E2E queda para uso manual del usuario en su instalación local.
@@ -381,8 +411,12 @@ Sin actualizar: `docs/architecture.md`, `docs/api-details.md`, `docs/db-*.md`, `
 | MCP server interno de NanoClaw asume estar in-process del SDK | Verificar en implementación que el MCP server actual funciona como subprocess standalone (paths de DB via env vars o args). Si asume in-process, ajustar para que tome paths por config. |
 | `--input-format stream-json` se necesita para push mid-stream y no fue implementado | Documentado como limitación conocida en `docs/claude-cli-provider.md`. La interface `AgentQuery.push` queda no-op. Iteración futura puede agregarlo. |
 | Refresh token caducado deja al agente sin auth | Mensaje de error claro al usuario. Documentado en troubleshooting. Mismo modo de falla que cualquier credencial expirada en cualquier provider. |
-| Bind-mount de archivo único en Docker rompe en atomic rename | Mount es de **directorio** (`/root/.claude/`), no archivo. Atomic renames dentro del directorio funcionan. |
+| Bind-mount de archivo único rompe en atomic rename del host | Los nested RO mounts de `settings.json`/`mcp.json`/`.credentials.json` siguen al inode original. El host **sobreescribe in-place** con `fs.writeFileSync` (truncate+write — preserva inode), no `rename(2)`. Mismo enfoque que el patrón ya en uso en `src/container-runner.ts:273-294`. |
 | Tres procesos abriendo `inbound.db` (loop + CLI + hook) genera SQLITE_BUSY | Hooks usan transacciones cortas + retry 50ms × 3. Patrón ya en uso por hooks del SDK. |
+| Agente reescribe `settings.json` (vía Bash/Write/Edit) y bypassa hooks o sustituye comando del hook por shell arbitraria | Nested RO mount sobre `/root/.claude/settings.json`. Verificar al implementar que `<sessionClaudeDir>` **no** quede expuesto vía otro mount RW (ej. `/workspace`); si lo está, mover los archivos de control a un directorio hermano fuera del session dir y mantener sólo el RO mount al path final. |
+| Agente reescribe `mcp.json` y logra RCE al spawnearse el próximo servidor MCP | Mismo nested RO mount sobre `/root/.claude/mcp.json`. Defensa adicional: regenerar el archivo desde el template en cada `docker run` (ya en el pseudocódigo). |
+| Agente sobreescribe `.credentials.json` y corrompe el token OAuth | Nested RO mount sobre `/root/.claude/.credentials.json`. El agente nunca necesita escribirlo; solo el host (vía resync por mtime). |
+| Flag injection si `input.prompt` empieza con `--` y el parser del CLI acepta flags tardíos | Separador `--` end-of-flags antes de `input.prompt` en el argv (ver sección "Módulo `claude-cli.ts`"). Costo cero, garantía local al provider. |
 
 ## Out of scope (deferred)
 
@@ -402,4 +436,8 @@ Sin actualizar: `docs/architecture.md`, `docs/api-details.md`, `docs/db-*.md`, `
    - Provocar compaction (conversación larga) — verificar archivo en `/workspace/agent/conversations/`.
    - Provocar tool deshabilitada (ej. `EnterPlanMode`) — verificar bloqueo.
    - Forzar caducidad de token → verificar error claro.
+   - **Tests de aislamiento (seguridad):**
+     - Pedir al agente que ejecute `Bash`: `echo '{}' > /root/.claude/settings.json` → debe fallar con `EROFS` o equivalente. Verificar que el siguiente turno sigue bloqueando tools de la denylist.
+     - Pedir al agente que ejecute `Bash`: `echo '{"mcpServers":{"x":{"command":"/bin/true"}}}' > /root/.claude/mcp.json` → debe fallar con `EROFS`.
+     - Pedir al agente que ejecute `Bash`: `cat /root/.claude/.credentials.json > /tmp/leak; echo done` → confirma el modelo de amenaza (lectura sí es posible — el aislamiento aquí es contra escritura, no contra lectura del propio token; lectura del token desde dentro del container es aceptada por diseño porque el CLI lo necesita). Si en el futuro se quiere defender contra lectura, evaluar separar el archivo a un path solo accesible por el binario del CLI vía hardening adicional.
 3. **Coexistencia:** mismo NanoClaw corriendo dos grupos, uno con `claude` (SDK), otro con `claude-cli`. Ambos funcionan en paralelo sin interferencia.

@@ -13,7 +13,7 @@
 ## Reference: Files to create / modify
 
 **Create (container/agent-runner side):**
-- `container/agent-runner/src/providers/tool-policies.ts` — extracted `TOOL_ALLOWLIST` + `DISALLOWED_TOOLS` (shared with SDK provider).
+- `container/agent-runner/src/providers/tool-policies.ts` — extracted `TOOL_ALLOWLIST` + `SDK_DISALLOWED_TOOLS` (shared with SDK provider).
 - `container/agent-runner/src/providers/claude-cli.ts` — provider class, argv builder, stream parser.
 - `container/agent-runner/src/providers/claude-cli-hooks/transcript.ts` — extracted `parseTranscript` + `formatTranscriptMarkdown`.
 - `container/agent-runner/src/providers/claude-cli-hooks/pre-tool-use.ts` — denylist + `setContainerToolInFlight`.
@@ -37,7 +37,7 @@
 
 **Modify:**
 - `container/agent-runner/src/providers/index.ts` — add `import './claude-cli.js';`.
-- `container/agent-runner/src/providers/claude.ts` — import `TOOL_ALLOWLIST` + `DISALLOWED_TOOLS` from `tool-policies.ts`; import `parseTranscript` + `formatTranscriptMarkdown` from `claude-cli-hooks/transcript.ts`.
+- `container/agent-runner/src/providers/claude.ts` — import `TOOL_ALLOWLIST` + `SDK_DISALLOWED_TOOLS` from `tool-policies.ts`; import `parseTranscript` + `formatTranscriptMarkdown` from `claude-cli-hooks/transcript.ts`.
 - `container/agent-runner/src/providers/factory.test.ts` — add a `claude-cli` case.
 - `src/providers/provider-container-registry.ts` — extend `ProviderContainerContext` with `containerConfig` field so the registered fn can read `mcpServers` without duplicating I/O.
 - `src/container-runner.ts` — pass `containerConfig` into the new context field (one-line change to `resolveProviderContribution`).
@@ -120,11 +120,11 @@ Create `container/agent-runner/src/providers/tool-policies.test.ts`:
 ```ts
 import { describe, expect, it } from 'bun:test';
 
-import { DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
+import { SDK_DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
 
 describe('tool-policies', () => {
   it('exports the same denylist the SDK provider used inline', () => {
-    expect(DISALLOWED_TOOLS).toEqual([
+    expect(SDK_DISALLOWED_TOOLS).toEqual([
       'CronCreate',
       'CronDelete',
       'CronList',
@@ -146,7 +146,7 @@ describe('tool-policies', () => {
   });
 
   it('arrays are frozen so callers cannot mutate them', () => {
-    expect(Object.isFrozen(DISALLOWED_TOOLS)).toBe(true);
+    expect(Object.isFrozen(SDK_DISALLOWED_TOOLS)).toBe(true);
     expect(Object.isFrozen(TOOL_ALLOWLIST)).toBe(true);
   });
 });
@@ -184,7 +184,7 @@ Create `container/agent-runner/src/providers/tool-policies.ts`:
  *   Code interactive UI affordances; would appear stuck in a headless
  *   container.
  */
-export const DISALLOWED_TOOLS: readonly string[] = Object.freeze([
+export const SDK_DISALLOWED_TOOLS: readonly string[] = Object.freeze([
   'CronCreate',
   'CronDelete',
   'CronList',
@@ -227,13 +227,13 @@ Expected: PASS, 3 tests.
 
 - [ ] **Step 5: Migrate `claude.ts` to use the shared module**
 
-In `container/agent-runner/src/providers/claude.ts` replace lines 25-58 (the inline `DISALLOWED_TOOLS` and `TOOL_ALLOWLIST` arrays) with a single import at the top of the file (alongside the existing imports):
+In `container/agent-runner/src/providers/claude.ts` replace lines 25-58 (the inline `SDK_DISALLOWED_TOOLS` and `TOOL_ALLOWLIST` arrays) with a single import at the top of the file (alongside the existing imports):
 
 ```ts
-import { DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
+import { SDK_DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
 ```
 
-Delete the original two `const DISALLOWED_TOOLS = [...]` and `const TOOL_ALLOWLIST = [...]` blocks. The callers later in the file (`disallowedTools: ...` and `allowedTools: ...` on the SDK option object) need a spread because the imported types are `readonly string[]` and the SDK expects mutable `string[]`. Update those two call sites to `[...DISALLOWED_TOOLS]` and `[...TOOL_ALLOWLIST]`.
+Delete the original two `const SDK_DISALLOWED_TOOLS = [...]` and `const TOOL_ALLOWLIST = [...]` blocks. Leave their callers (`disallowedTools: SDK_DISALLOWED_TOOLS`, `allowedTools: TOOL_ALLOWLIST` further down) unchanged — the imported names match.
 
 - [ ] **Step 6: Run the agent-runner test suite to confirm no regression**
 
@@ -622,7 +622,7 @@ describe('pre-tool-use hook', () => {
     expect(stdout.trim()).toBe('');
   });
 
-  it('blocks each entry of DISALLOWED_TOOLS', async () => {
+  it('blocks each entry of SDK_DISALLOWED_TOOLS', async () => {
     for (const name of [
       'CronCreate',
       'CronDelete',
@@ -658,7 +658,7 @@ Create `container/agent-runner/src/providers/claude-cli-hooks/pre-tool-use.ts`:
  * Two responsibilities, both mirroring the SDK provider's `preToolUseHook`
  * callback (claude.ts):
  *
- *   1. Block tools on the DISALLOWED_TOOLS list. The CLI reads our
+ *   1. Block tools on the SDK_DISALLOWED_TOOLS list. The CLI reads our
  *      stdout for a JSON decision: `{decision:'block', stopReason:'...'}`
  *      (anything else is treated as "continue"). Defense-in-depth: even if
  *      `--disallowedTools` somehow leaks one through, this catches it.
@@ -672,7 +672,7 @@ Create `container/agent-runner/src/providers/claude-cli-hooks/pre-tool-use.ts`:
  * its default tolerance.
  */
 import { setContainerToolInFlight } from '../../db/connection.js';
-import { DISALLOWED_TOOLS } from '../tool-policies.js';
+import { SDK_DISALLOWED_TOOLS } from '../tool-policies.js';
 
 const raw = await Bun.stdin.text().catch(() => '');
 let event: { tool_name?: string; tool_input?: Record<string, unknown> } = {};
@@ -684,7 +684,7 @@ try {
 
 const toolName = event.tool_name ?? '';
 
-if (toolName && DISALLOWED_TOOLS.includes(toolName)) {
+if (toolName && SDK_DISALLOWED_TOOLS.includes(toolName)) {
   console.log(
     JSON.stringify({
       decision: 'block',
@@ -1087,7 +1087,7 @@ Create `container/agent-runner/src/providers/claude-cli.ts`:
  * The class itself arrives in a later task; this file currently exports the
  * pure argv builder so it can be unit-tested in isolation.
  */
-import { DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
+import { SDK_DISALLOWED_TOOLS, TOOL_ALLOWLIST } from './tool-policies.js';
 
 const DEFAULT_MCP_CONFIG_PATH = '/home/node/.claude/mcp.json';
 const DEFAULT_SETTINGS_PATH = '/home/node/.claude/settings.json';
@@ -1125,7 +1125,7 @@ export function buildClaudeCliArgs(input: BuildClaudeCliArgsInput): string[] {
     '--allowedTools',
     TOOL_ALLOWLIST.join(','),
     '--disallowedTools',
-    DISALLOWED_TOOLS.join(','),
+    SDK_DISALLOWED_TOOLS.join(','),
     '--permission-mode',
     'bypassPermissions',
     '--dangerously-skip-permissions',
@@ -1505,6 +1505,7 @@ export class ClaudeCliProvider implements AgentProvider {
   query(input: QueryInput): AgentQuery {
     const args = buildClaudeCliArgs({
       prompt: input.prompt,
+      cwd: input.cwd,
       continuation: input.continuation,
       systemContext: input.systemContext,
       additionalDirectories: this.additionalDirectories,
